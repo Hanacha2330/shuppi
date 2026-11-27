@@ -1,0 +1,657 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <!-- viewport-fit=cover でノッチ・ホームバー付きスマホの画面端まで適切に表示 -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>Campus Wallet | 学生・社会人 収支シミュレーター</title>
+  <meta name="theme-color" content="#FFFFFF">
+  <meta name="description" content="設定から学生モードと社会人モードを切り替え、今日使えるお金と扶養/控除・自由な計算式を1画面で管理できるシンプル収支シミュレーター">
+
+  <!-- PWA（ホーム画面への追加・全画面起動）用メタタグと外部マニフェスト -->
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="CampusWallet">
+  <link rel="manifest" href="./manifest.json">
+  <link rel="icon" type="image/svg+xml" href="./icon.svg">
+  <!-- iOS Safari は SVG 非対応かつ透過背景だと黒枠が出るため、不透明背景の180px PNGを指定 -->
+  <link rel="apple-touch-icon" sizes="180x180" href="./icons/icon-180.png">
+
+  <link rel="stylesheet" href="./css/styles.css?v=11">
+  <!-- type="module" により HTML の解析後に遅延実行され、import/export で分割管理できる -->
+  <script type="module" src="./js/app.js?v=11"></script>
+</head>
+<body data-mode="student">
+
+  <!-- 上部固定ヘッダー：タイトル・現在モード表示・使い方・設定・インストールボタン -->
+  <header>
+    <div class="header-inner">
+      <div class="app-title">
+        <span>Campus Wallet</span>
+        <span id="header-mode-badge" class="mode-pill">学生モード</span>
+      </div>
+      <div class="header-actions">
+        <button type="button" id="btn-toggle-guide" class="btn-header btn-header-sub" aria-expanded="false" aria-controls="usage-guide">使い方</button>
+        <button type="button" id="btn-open-settings" class="btn-header btn-header-primary" aria-expanded="false" aria-controls="settings-modal">設定</button>
+        <!-- Android Chrome 等でインストール可能になったときだけ JS で hidden を解除して表示 -->
+        <button type="button" id="android-install-btn" class="btn-header btn-header-install" hidden>
+          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+            <polyline points="7 10 12 15 17 10"></polyline>
+            <line x1="12" y1="15" x2="12" y2="3"></line>
+          </svg>
+          <span>インストール</span>
+        </button>
+      </div>
+    </div>
+    <!-- iOS Safari で通常ブラウザ表示のときだけ JS で hidden を解除して表示 -->
+    <div id="ios-install-banner" hidden>
+      <div class="ios-banner-inner">
+        <span><strong>iOSの方へ：</strong>Safari下部メニューの共有ボタン［↑］から「ホーム画面に追加」でアプリ化できます。</span>
+        <button type="button" id="close-ios-banner" class="close-banner" aria-label="案内を閉じる">×</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="container">
+
+    <!-- ① ホーム（ダッシュボード）：1日あたりの予算と設定・クイック入力 -->
+    <section id="tab-dashboard" class="tab-section active">
+      <div class="card">
+        <div class="card-title">
+          <span>今日使えるお金（日割り上限）</span>
+          <span id="days-left-badge" class="tag num">残り -- 日</span>
+        </div>
+        <div class="hero-box">
+          <div class="hero-label">1日あたりの許容予算</div>
+          <div id="daily-budget" class="hero-amount num">¥0</div>
+          <div id="budget-status-text" class="hero-sub">計算中...</div>
+        </div>
+        <div class="progress-track">
+          <div id="budget-progress" class="progress-fill"></div>
+        </div>
+        <div class="summary-grid">
+          <div class="summary-item">
+            <div id="sum-income-label" class="summary-item-label">今月の収入</div>
+            <div id="sum-income" class="summary-item-val num">¥0</div>
+          </div>
+          <div class="summary-item">
+            <div id="sum-expense-label" class="summary-item-label">支出＋貯金目標</div>
+            <div id="sum-expense" class="summary-item-val num">¥0</div>
+          </div>
+          <div class="summary-item">
+            <div class="summary-item-label">フリー残高</div>
+            <div id="sum-balance" class="summary-item-val num">¥0</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 学生モード専用設定 -->
+      <div class="card" data-only-mode="student">
+        <div class="card-title">今月の貯金目標・残り日数設定</div>
+        <div class="form-row mb-0">
+          <div class="flex-1">
+            <label for="input-stu-savings-goal">今月の目標貯金額（円）</label>
+            <input type="number" id="input-stu-savings-goal" min="0" step="1000" inputmode="numeric">
+          </div>
+          <div class="flex-1">
+            <label for="input-stu-days-left">今月の残り日数（日）</label>
+            <input type="number" id="input-stu-days-left" min="1" max="31" inputmode="numeric">
+          </div>
+        </div>
+      </div>
+
+      <!-- 社会人モード専用設定（給料日サイクル・先取り投資・クレカ引き落とし確保） -->
+      <div class="card" data-only-mode="worker" hidden>
+        <div class="card-title">給料日サイクル・先取り設定</div>
+        <div class="form-row">
+          <div class="flex-1">
+            <label for="select-payday">締め日（残り日数の基準）</label>
+            <select id="select-payday">
+              <option value="0">末日締め（カレンダー月）</option>
+              <option value="25">毎月25日（給料日）</option>
+              <option value="15">毎月15日（給料日）</option>
+              <option value="10">毎月10日（給料日）</option>
+              <option value="20">毎月20日（給料日）</option>
+              <option value="5">毎月5日（給料日）</option>
+            </select>
+          </div>
+          <div class="flex-1">
+            <label for="input-wk-days-left">次の締めまでの残り日数</label>
+            <input type="number" id="input-wk-days-left" min="1" max="31" inputmode="numeric">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="flex-1">
+            <label for="input-wk-savings-goal">目標貯金額（円）</label>
+            <input type="number" id="input-wk-savings-goal" min="0" step="1000" inputmode="numeric">
+          </div>
+          <div class="flex-1">
+            <label for="input-invest-goal">先取り投資・NISA等（円）</label>
+            <input type="number" id="input-invest-goal" min="0" step="1000" inputmode="numeric">
+          </div>
+        </div>
+        <div class="form-group mb-0">
+          <label for="input-credit-pending">来月のクレカ引き落とし予定（確保額・円）</label>
+          <input type="number" id="input-credit-pending" min="0" step="1000" inputmode="numeric">
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">
+          <span>クイック出費メモ</span>
+          <button type="button" class="btn btn-sm" data-switch-tab="tab-expense">詳細へ</button>
+        </div>
+        <form id="quick-expense-form" class="form-row mb-0">
+          <select id="quick-cat" class="w-110" data-rendered-mode="student" aria-label="カテゴリ">
+            <option value="食費">食費</option>
+            <option value="交際費">交際費</option>
+            <option value="書籍・学用品">書籍・学用品</option>
+            <option value="交通費">交通費</option>
+            <option value="その他">その他</option>
+          </select>
+          <input type="number" id="quick-amount" min="1" inputmode="numeric" placeholder="金額（円）">
+          <button type="submit" class="btn btn-primary">追加</button>
+        </form>
+      </div>
+    </section>
+
+    <!-- ② 収入・扶養 / 控除：モードに応じて表示内容を完全に分離 -->
+    <section id="tab-income" class="tab-section">
+      <!-- 学生向け表示：バイト時給・シフト・分刻み計算・差し引き＋仕送り＋扶養の壁 -->
+      <div id="income-student-view" data-only-mode="student">
+        <div class="card">
+          <div class="card-title">バイト時給・シフト見込み（1か月分）</div>
+          <div class="form-row mb-0">
+            <div class="flex-1">
+              <label for="inc-wage">バイト時給（円）</label>
+              <input type="number" id="inc-wage" min="0" step="10" inputmode="numeric">
+            </div>
+            <div class="flex-1">
+              <label for="inc-time-unit">時給の計算単位（何分刻み）</label>
+              <select id="inc-time-unit">
+                <option value="1">1分刻み（切り捨てなし）</option>
+                <option value="5">5分刻み</option>
+                <option value="10">10分刻み</option>
+                <option value="15" selected>15分刻み</option>
+                <option value="30">30分刻み</option>
+                <option value="60">60分（1時間）刻み</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="sub-section">
+            <div class="sub-section-title">
+              <span>登録シフト（1か月分）</span>
+              <span id="shift-total-badge" class="tag num">0日 / 0時間</span>
+            </div>
+            <div id="shift-list"></div>
+            <form id="shift-form" class="shift-form-box">
+              <div class="form-group mb-8">
+                <label for="shift-label">シフト名・日付メモ</label>
+                <input type="text" id="shift-label" placeholder="例: 11/28 夕方 / 平日シフト">
+              </div>
+              <div class="form-row">
+                <div class="flex-1">
+                  <label for="shift-start">開始時刻</label>
+                  <input type="time" id="shift-start" value="17:00" required>
+                </div>
+                <div class="flex-1">
+                  <label for="shift-end">終了時刻</label>
+                  <input type="time" id="shift-end" value="21:30" required>
+                </div>
+              </div>
+              <div class="form-row">
+                <div class="flex-1">
+                  <label for="shift-break">休憩時間（分）</label>
+                  <input type="number" id="shift-break" min="0" max="720" step="5" value="0" inputmode="numeric">
+                </div>
+                <div class="flex-1">
+                  <label for="shift-days">月の出勤日数（日）</label>
+                  <input type="number" id="shift-days" min="1" max="31" value="1" inputmode="numeric">
+                </div>
+              </div>
+              <button type="submit" class="btn btn-primary w-full">+ シフトを追加</button>
+            </form>
+          </div>
+
+          <div class="sub-section">
+            <div class="sub-section-title">
+              <span>まかない・交通費などの差し引き</span>
+              <span id="shift-deduction-badge" class="tag num">-¥0</span>
+            </div>
+            <div id="shift-deduction-list"></div>
+            <form id="shift-deduction-form" class="shift-form-box">
+              <div class="form-row">
+                <div class="flex-2">
+                  <label for="deduct-name">差し引き項目</label>
+                  <input type="text" id="deduct-name" placeholder="例: まかない代・交通費">
+                </div>
+                <div class="w-120">
+                  <label for="deduct-type">計算単位</label>
+                  <select id="deduct-type">
+                    <option value="per_shift">1出勤ごと</option>
+                    <option value="monthly">月額固定</option>
+                  </select>
+                </div>
+              </div>
+              <div class="form-row mb-0">
+                <div class="flex-1">
+                  <input type="number" id="deduct-amount" min="1" inputmode="numeric" aria-label="差し引く金額（円）" placeholder="差し引く金額（円）">
+                </div>
+                <button type="submit" class="btn btn-primary">追加</button>
+              </div>
+            </form>
+          </div>
+
+          <div class="shift-breakdown">
+            <div class="shift-breakdown-row">
+              <span>シフト支給合計</span>
+              <span id="shift-gross-total" class="num">¥0</span>
+            </div>
+            <div class="shift-breakdown-row">
+              <span>差し引き合計（まかない・交通費等）</span>
+              <span id="shift-deduction-total" class="num">-¥0</span>
+            </div>
+          </div>
+
+          <div class="wall-highlight">
+            <div>
+              <div class="wall-label-main">1か月分の給料見込み</div>
+              <div id="shift-unit-note" class="wall-note-sub num">実働 0時間 / 15分刻みで計算</div>
+            </div>
+            <span id="parttime-monthly-total" class="num wall-value-lg">¥0</span>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">仕送り・その他の月収（学生）</div>
+          <div class="form-row mb-0">
+            <div class="flex-1">
+              <label for="inc-allowance">仕送り（円）</label>
+              <input type="number" id="inc-allowance" min="0" step="1000" inputmode="numeric">
+            </div>
+            <div class="flex-1">
+              <label for="inc-other">奨学金・その他（円）</label>
+              <input type="number" id="inc-other" min="0" step="1000" inputmode="numeric">
+            </div>
+          </div>
+          <div class="wall-highlight">
+            <span class="wall-label-main">今月の総収入見込み（バイト＋仕送り等）</span>
+            <span id="student-total-income" class="num wall-value-md">¥0</span>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">扶養の壁 逆算シミュレーター</div>
+          <div class="form-row">
+            <div class="flex-1">
+              <label for="wall-limit">意識する壁の上限</label>
+              <select id="wall-limit">
+                <option value="1030000">103万円の壁（所得税・扶養控除）</option>
+                <option value="1060000">106万円の壁（社会保険・勤務先条件）</option>
+                <option value="1300000">130万円の壁（社会保険の扶養）</option>
+                <option value="1500000">150万円の壁（勤労学生控除など）</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-group">
+            <label for="ytd-income">先月までの今年の累計バイト収入（円）</label>
+            <input type="number" id="ytd-income" min="0" step="1000" inputmode="numeric">
+          </div>
+
+          <div class="progress-track">
+            <div id="wall-progress" class="progress-fill"></div>
+          </div>
+          <div class="wall-meta-row">
+            <span id="wall-current-text" class="num">見込み累計: ¥0</span>
+            <span id="wall-remain-yen" class="num">残り枠: ¥0</span>
+          </div>
+
+          <div class="wall-highlight">
+            <div>
+              <div class="wall-note-title">年末まであと働ける時間</div>
+              <div class="wall-note-sub">※現在の時給・差し引き前のシフト支給額ベースで算出</div>
+            </div>
+            <div id="wall-remain-hours" class="num wall-value-lg">0.0 時間</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 社会人向け表示：額面→手取り概算＋ふるさと納税/副業20万シミュレーター -->
+      <div id="income-worker-view" data-only-mode="worker" hidden>
+        <div class="card">
+          <div class="card-title">今月の給与・手取り設定（社会人）</div>
+          <div class="form-row">
+            <div class="flex-1">
+              <label for="wk-gross-salary">基本給・固定手当（額面/円）</label>
+              <input type="number" id="wk-gross-salary" min="0" step="1000" inputmode="numeric">
+            </div>
+            <div class="flex-1">
+              <label for="wk-overtime-pay">残業代・変動手当（額面/円）</label>
+              <input type="number" id="wk-overtime-pay" min="0" step="1000" inputmode="numeric">
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="flex-1">
+              <label for="wk-deduction-rate">社保・税の天引き率（%）</label>
+              <input type="number" id="wk-deduction-rate" min="0" max="100" step="1" inputmode="decimal">
+            </div>
+            <div class="flex-1">
+              <label for="wk-other-net">副業・その他手取り（円）</label>
+              <input type="number" id="wk-other-net" min="0" step="1000" inputmode="numeric">
+            </div>
+          </div>
+          <div class="wall-highlight">
+            <div>
+              <div class="wall-label-main">今月の見込み手取り収入</div>
+              <div id="wk-gross-note" class="wall-note-sub num">額面 ¥0 / 天引き -¥0</div>
+            </div>
+            <span id="worker-net-monthly" class="num wall-value-md">¥0</span>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">控除・副業シミュレーター</div>
+          <div class="form-group">
+            <label for="wk-sim-type">シミュレーション種別</label>
+            <select id="wk-sim-type">
+              <option value="furusato">ふるさと納税 上限額目安</option>
+              <option value="sidejob">副業 20万円の壁（確定申告ライン）</option>
+            </select>
+          </div>
+
+          <div id="wk-sim-furusato">
+            <div class="form-row">
+              <div class="flex-1">
+                <label for="wk-annual-gross">今年の給与年収見込み（額面/円）</label>
+                <input type="number" id="wk-annual-gross" min="0" step="10000" inputmode="numeric">
+              </div>
+              <div class="flex-1">
+                <label for="wk-family-type">家族構成の目安</label>
+                <select id="wk-family-type">
+                  <option value="single">独身・共働き</option>
+                  <option value="spouse">夫婦（配偶者控除あり）</option>
+                  <option value="spouse_teen">夫婦＋高校生1人</option>
+                </select>
+              </div>
+            </div>
+            <div class="form-group">
+              <label for="wk-furusato-donated">今年の寄付済み合計（円）</label>
+              <input type="number" id="wk-furusato-donated" min="0" step="1000" inputmode="numeric">
+            </div>
+
+            <div class="progress-track">
+              <div id="wk-furusato-progress" class="progress-fill"></div>
+            </div>
+            <div class="wall-meta-row">
+              <span id="wk-furusato-donated-text" class="num">寄付済み: ¥0</span>
+              <span id="wk-furusato-remain-text" class="num">残り上限: ¥0</span>
+            </div>
+
+            <div class="wall-highlight">
+              <div>
+                <div class="wall-note-title">自己負担2,000円の上限目安</div>
+                <div class="wall-note-sub">※総務省早見表に基づく概算</div>
+              </div>
+              <div id="wk-furusato-cap" class="num wall-value-lg">¥0</div>
+            </div>
+          </div>
+
+          <div id="wk-sim-sidejob" hidden>
+            <div class="form-group">
+              <label for="wk-ytd-side-profit">今年の副業所得累計（収入 − 経費 / 円）</label>
+              <input type="number" id="wk-ytd-side-profit" min="0" step="1000" inputmode="numeric">
+            </div>
+
+            <div class="progress-track">
+              <div id="wk-sidejob-progress" class="progress-fill"></div>
+            </div>
+            <div class="wall-meta-row">
+              <span id="wk-sidejob-current-text" class="num">累計所得: ¥0</span>
+              <span id="wk-sidejob-remain-text" class="num">20万まであと: ¥0</span>
+            </div>
+
+            <div class="wall-highlight">
+              <div>
+                <div class="wall-note-title">確定申告不要ライン（年20万円）</div>
+                <div class="wall-note-sub">※20万円超で原則確定申告が必要</div>
+              </div>
+              <div id="wk-sidejob-status" class="num wall-value-lg">あと ¥0</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ③ 出費管理：モード独立の固定費・変動費・履歴 -->
+    <section id="tab-expense" class="tab-section">
+      <!-- 社会人モード時のみ表示する家計バランス比率バー -->
+      <div class="card" data-only-mode="worker" hidden>
+        <div class="card-title">家計バランス比率（対手取り収入）</div>
+        <div class="ratio-track">
+          <div id="ratio-bar-fixed" class="ratio-seg ratio-seg-fixed"></div>
+          <div id="ratio-bar-var" class="ratio-seg ratio-seg-var"></div>
+          <div id="ratio-bar-save" class="ratio-seg ratio-seg-save"></div>
+        </div>
+        <div class="ratio-legend">
+          <span class="ratio-legend-item"><i class="dot dot-fixed"></i><span id="ratio-text-fixed" class="num">固定費 0%</span></span>
+          <span class="ratio-legend-item"><i class="dot dot-var"></i><span id="ratio-text-var" class="num">変動費 0%</span></span>
+          <span class="ratio-legend-item"><i class="dot dot-save"></i><span id="ratio-text-save" class="num">貯蓄・余力 0%</span></span>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">
+          <span>固定費（毎月引かれるお金）</span>
+          <span id="fixed-total-label" class="num text-main">合計 ¥0</span>
+        </div>
+        <div id="fixed-list"></div>
+        <form id="fixed-expense-form" class="form-row mt-12 mb-0">
+          <input type="text" id="new-fixed-name" placeholder="項目名（例: サブスク）">
+          <input type="number" id="new-fixed-amount" class="w-110" min="1" inputmode="numeric" placeholder="金額">
+          <button type="submit" class="btn btn-primary">追加</button>
+        </form>
+      </div>
+
+      <div class="card">
+        <div class="card-title">
+          <span>変動費（日々の出費）</span>
+          <span id="var-total-label" class="num text-main">合計 ¥0</span>
+        </div>
+        <div id="category-bars" class="mb-14"></div>
+
+        <form id="var-expense-form" class="form-row mb-0">
+          <select id="new-var-cat" class="w-110" data-rendered-mode="student" aria-label="変動費カテゴリ">
+            <option value="食費">食費</option>
+            <option value="交際費">交際費</option>
+            <option value="書籍・学用品">書籍・学用品</option>
+            <option value="交通費">交通費</option>
+            <option value="その他">その他</option>
+          </select>
+          <input type="text" id="new-var-memo" placeholder="メモ（任意）">
+          <input type="number" id="new-var-amount" class="w-100" min="1" inputmode="numeric" placeholder="金額">
+          <button type="submit" class="btn btn-primary">追加</button>
+        </form>
+        <div id="var-list" class="mt-8"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">
+          <span>月次収支の履歴（スナップショット）</span>
+          <button type="button" id="btn-record-history" class="btn btn-sm">今月を記録</button>
+        </div>
+        <div id="history-list"></div>
+      </div>
+    </section>
+
+    <!-- ④ 計算式：モード別の変数チップ・計算式リスト・データ管理 -->
+    <section id="tab-formula" class="tab-section">
+      <div class="card">
+        <div class="card-title">新しい計算式を作成</div>
+        <form id="formula-form">
+          <div class="form-group">
+            <label for="formula-name">計算式のタイトル・単位</label>
+            <div class="form-row mb-0">
+              <input type="text" id="formula-name" class="flex-2" placeholder="例: 旅行代5万円まであと何時間？">
+              <input type="text" id="formula-unit" class="flex-1" placeholder="単位 (例: 時間)">
+            </div>
+          </div>
+          <div class="form-group">
+            <label for="formula-expr">タップして変数を挿入</label>
+            <div id="var-chips" class="var-chips" data-rendered-mode="student">
+              <button type="button" class="chip" data-var="[バイト時給]">[バイト時給]</button>
+              <button type="button" class="chip" data-var="[月間バイト時間]">[月間バイト時間]</button>
+              <button type="button" class="chip" data-var="[バイト代見込み]">[バイト代見込み]</button>
+              <button type="button" class="chip" data-var="[仕送り]">[仕送り]</button>
+              <button type="button" class="chip" data-var="[総収入]">[総収入]</button>
+              <button type="button" class="chip" data-var="[固定費合計]">[固定費合計]</button>
+              <button type="button" class="chip" data-var="[変動費合計]">[変動費合計]</button>
+              <button type="button" class="chip" data-var="[フリー残高]">[フリー残高]</button>
+              <button type="button" class="chip" data-var="[目標貯金額]">[目標貯金額]</button>
+              <button type="button" class="chip" data-var="[残り日数]">[残り日数]</button>
+            </div>
+            <input type="text" id="formula-expr" placeholder="例: (50000 - [フリー残高]) / [バイト時給]">
+          </div>
+          <button type="submit" class="btn btn-primary w-full">この計算式を保存</button>
+        </form>
+      </div>
+
+      <div class="card">
+        <div class="card-title">
+          <span>保存済みのシミュレーション結果</span>
+          <button type="button" id="btn-add-mode-presets" class="btn btn-sm">+ サンプル式を追加</button>
+        </div>
+        <div id="formula-list"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">データ管理（バックアップ・初期化）</div>
+        <div class="backup-row">
+          <button type="button" id="btn-export-json" class="btn btn-sm flex-1">バックアップ保存（JSON）</button>
+          <button type="button" id="btn-import-json" class="btn btn-sm flex-1">バックアップ復元</button>
+          <input type="file" id="input-import-file" accept=".json,application/json" hidden>
+        </div>
+        <p id="backup-status-msg" class="backup-msg" hidden></p>
+        <div class="reset-area">
+          <button type="button" id="btn-reset-sample" class="btn btn-sm">学生データを初期値に戻す</button>
+          <button type="button" id="btn-clear-all" class="btn btn-sm text-danger">このモードを空にする</button>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- 下部固定タブバー -->
+  <nav class="tab-bar" aria-label="メインナビゲーション">
+    <div class="tab-bar-inner" role="tablist">
+      <button type="button" class="tab-btn active" role="tab" aria-selected="true" data-target="tab-dashboard">ホーム</button>
+      <button type="button" id="tab-btn-income" class="tab-btn" role="tab" aria-selected="false" data-target="tab-income">収入・扶養</button>
+      <button type="button" class="tab-btn" role="tab" aria-selected="false" data-target="tab-expense">出費管理</button>
+      <button type="button" class="tab-btn" role="tab" aria-selected="false" data-target="tab-formula">計算式</button>
+    </div>
+  </nav>
+
+  <!-- 設定モーダル：カード型の利用モード選択＆説明ページ表示設定 -->
+  <div id="settings-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="settings-modal-title" hidden>
+    <div class="modal-dialog settings-dialog">
+      <div class="modal-header">
+        <h2 id="settings-modal-title" class="modal-title">設定</h2>
+        <button type="button" id="btn-close-settings" class="modal-close-btn" aria-label="設定を閉じる">×</button>
+      </div>
+
+      <div class="settings-section">
+        <div class="settings-section-label">利用モード（データは別々に保存されます）</div>
+        <div id="mode-selector" class="mode-card-list" role="radiogroup" aria-label="利用モード選択">
+          <button type="button" class="mode-card mode-card-student active" role="radio" aria-checked="true" data-mode="student">
+            <span class="mode-card-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M22 10v6M2 10l10-5 10 5-10 5z"></path>
+                <path d="M6 12v5c3 3 9 3 12 0v-5"></path>
+              </svg>
+            </span>
+            <span class="mode-card-body">
+              <span class="mode-card-title-row">
+                <span class="mode-card-title">学生モード</span>
+                <span class="mode-card-tag">CAMPUS</span>
+              </span>
+              <span class="mode-card-desc">バイト時給・シフト（分刻み・まかない等差引）・扶養の壁を管理</span>
+            </span>
+            <span class="mode-card-check" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="20 6 9 17 4 12"></polyline>
+              </svg>
+            </span>
+          </button>
+
+          <button type="button" class="mode-card mode-card-worker" role="radio" aria-checked="false" data-mode="worker">
+            <span class="mode-card-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="2" y="7" width="20" height="14" rx="2" ry="2"></rect>
+                <path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"></path>
+              </svg>
+            </span>
+            <span class="mode-card-body">
+              <span class="mode-card-title-row">
+                <span class="mode-card-title">社会人モード</span>
+                <span class="mode-card-tag">WORK</span>
+              </span>
+              <span class="mode-card-desc">手取り概算・給料日サイクル・NISA・ふるさと納税を管理</span>
+            </span>
+            <span class="mode-card-check" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="20 6 9 17 4 12"></polyline>
+              </svg>
+            </span>
+          </button>
+        </div>
+      </div>
+
+      <div class="settings-section">
+        <div class="settings-section-label">案内ページの表示</div>
+        <label class="settings-toggle-row">
+          <input type="checkbox" id="toggle-mode-guide">
+          <span><strong id="settings-guide-mode-label">学生モード</strong>の起動・切替時に説明ページを表示</span>
+        </label>
+      </div>
+
+      <button type="button" id="btn-done-settings" class="btn w-full">閉じる</button>
+    </div>
+  </div>
+
+  <!-- モード別の使い方説明モーダル：学生モード／社会人モードで内容が切り替わる -->
+  <div id="usage-guide" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="usage-guide-title" hidden>
+    <div class="modal-dialog guide-dialog">
+      <div class="modal-header">
+        <h2 id="usage-guide-title" class="modal-title">学生モードの使い方</h2>
+        <div class="modal-header-right">
+          <span id="usage-guide-badge" class="app-badge">STUDENT GUIDE</span>
+          <button type="button" id="btn-close-guide" class="modal-close-btn" aria-label="使い方を閉じる">×</button>
+        </div>
+      </div>
+      <p id="usage-guide-lead" class="guide-lead">バイト代・仕送り・扶養の壁を1画面で管理できます。最初は学生向けのサンプル数字が入っています。</p>
+      <ol id="usage-guide-steps" class="guide-steps">
+        <li class="guide-step">
+          <span class="guide-step-num num">1</span>
+          <span><strong>ホーム</strong>：目標貯金額と残り日数から「今日使えるお金」を日割り計算。クイック出費メモですぐに支出を記録できます。</span>
+        </li>
+        <li class="guide-step">
+          <span class="guide-step-num num">2</span>
+          <span><strong>収入・扶養</strong>：バイト時給と何分刻みかを選び、シフトや差し引き（まかない・交通費）を入れると1か月分の給料見込みと扶養の壁を自動計算します。</span>
+        </li>
+        <li class="guide-step">
+          <span class="guide-step-num num">3</span>
+          <span><strong>出費・計算式</strong>：固定費や変動費の管理に加え、「旅行代まであと何時間？」など自由な計算式を作成できます。</span>
+        </li>
+      </ol>
+      <p id="usage-guide-note" class="guide-note">※右上の「設定」から社会人モードへ切替、「使い方」からいつでも見直せます</p>
+      <div class="guide-actions">
+        <button type="button" id="btn-confirm-guide" class="btn btn-primary w-full guide-confirm-btn">確認しました</button>
+        <button type="button" id="btn-dont-show-guide" class="btn w-full guide-dismiss-btn">次回から表示しない</button>
+      </div>
+    </div>
+  </div>
+
+</body>
+</html>
